@@ -1,0 +1,159 @@
+
+library(factoextra)
+library(bitops)
+library(RCurl)
+library(twitteR)
+library(NLP)
+library(tm)
+library(ggplot2)
+library(Rcpp)
+library(RColorBrewer)
+library(readr)
+library(base)
+library(cluster)
+library(NbClust)
+library(wordcloud)
+library(SnowballC)
+library(dplyr)
+##---------------------------------------------------------------
+#--------------------------A) PREPROCESAMIENTO---------------------------#
+
+# paso 1: importar datos
+load("C:/Users/EEIE/Music/Nicolás/California2.Rdata")
+#View(head(rt))
+
+#tomamos una muestra de los tweets de idioma español
+summary(as.factor(dat2$lang)) #para ver que lenguajes existen en la base de datos
+mufire <- dat2[dat2$lang=="en",]
+#View(head(muAvalanche))
+
+# paso 2: seleccionar el texto de los tweets
+texto <- mufire$text
+texto<- iconv(texto, 'UTF-8', 'ASCII')
+
+# paso 3: limpiar los datos de elementos no deseados
+
+textoclean <- lapply(texto, function(sentence){
+  sentence <- gsub("@\\w+", "", sentence)
+  sentence <- gsub("#\\w+", "", sentence)
+  sentence <- gsub(".w+", "", sentence)
+  sentence <- gsub("https//t.co/w+", "", sentence)
+  sentence <- gsub("http[[:alnum:][:punct:]]*", "",sentence)
+  sentence <- gsub("[[:digit:]]", "",sentence)
+  sentence <- gsub("[[:punct:]]", "",sentence)
+  sentence <- gsub("[[:cntrl:]]", "",sentence)
+  sentence <- tolower(sentence) #para pasar a minusculas #nuevo 
+  sentence <- stripWhitespace (sentence)
+})
+
+#3.1 eliminamos los tweets repetidos
+textoclean <- unique(textoclean)
+
+#3.2 Eliminamos los tweets vacios
+textoclean<-textoclean[!is.na(textoclean)]
+#save(textoclean,file = "textoclean.Rdata")
+load("C:\\Users\\EEIE\\Music\\Nicolás\\preprocesamiento\\textoclean.Rdata")
+#-------Para efectos de la prueba, tomaré solo los 200 primeros tweets------#
+#textoclean1<- textoclean[1:500]
+
+# paso 4: se construye un corpus
+corpus <- Corpus(VectorSource(textoclean)) #Ver archivo Tm
+#View(head(corpus))
+
+#' paso 5: tokenizar los corpus
+palabras.eliminar<-c("california","via")
+wordstodelete<-read.csv("C:/Users/EEIE/Music/Nicolás/wordstodelete.csv")
+# 5.1 removemos stopwords en español, palabras especificas y hacemos stemming
+corpus <- tm_map(corpus, removeWords, stopwords("english"))
+corpus <- tm_map(corpus, removeWords, palabras.eliminar)
+corpus <- tm_map(corpus, stemDocument,language = "english")
+corpus <- tm_map(corpus, stripWhitespace)
+corpus <- tm_map(corpus, removeWords, wordstodelete$a)
+
+# paso 6: analisis del corpus
+#6.1 Hacemos una nube de palabras para observar que palabras son las más frecuentes
+nubepalabras<-wordcloud(corpus, max.words = 80, random.order = F, colors = brewer.pal(name = "Dark2", n = 8))
+
+#6.2 Observamos frecuecia de palabras
+#creamos la matriz documento termino
+tdm<- TermDocumentMatrix(corpus)
+tdmat <- as.matrix(tdm)
+dim(tdmat)
+
+#Observamos frecuecia de palabras en una tabla
+
+palabrastdmat<- rowSums(tdmat)
+palabrastdmat<- sort(x = palabrastdmat,decreasing = TRUE)
+palabrastdmat <- data.frame(palabra = names(palabrastdmat), frec = palabrastdmat)
+palabrastdmat[1:100, ]
+save(palabrastdmat,file = "frecuencia palabrasfinal2.Rdata")
+load("C:\\Users\\EEIE\\Music\\Nicolás\\2. kmeans\\frecuencia palabrasfinal2.Rdata")
+
+
+# Paso /: La representación transforma el corpus de documentos a un espacio vectorial para procesarlos
+
+dtm <-
+  DocumentTermMatrix(corpus)
+
+#si se encuentra que hay empty documents, entonces correr este codigo
+ui = unique(dtm$i)
+dtm.new = dtm[ui,]
+inspect(dtm.new)
+
+#Pasamos el dtm como matriz
+dtmatrix <- as.matrix(dtm.new)
+save(dtmatrix,file = "dtmmatriz2.Rdata")
+load("C:\\Users\\EEIE\\Music\\Nicolás\\2. kmeans\\dtmmatriz2.Rdata")
+
+dfa <- data.frame(dtmatrix)
+save(dfa,file = "dfa2.Rdata")
+load("C:\\Users\\EEIE\\Music\\Nicolás\\2. kmeans\\dfa2.Rdata")
+
+##---------------------------------------------------------------
+#' paso 7: Utilizamos Silhouette method para k means clustering.
+
+#Silhouette method
+a<-fviz_nbclust(dfa, kmeans, method = "silhouette", k.max = 20)+ 
+  labs(subtitle = "Silhouette method")
+a
+
+#' paso 8: Se obtiene el kmeans para su respectivo análisis de grupos
+
+res <- kmeans(dfa, 3, algorithm = "MacQueen", nstart = 50, iter.max = 100) #colocamos el k que salió en el paso anterior
+
+res
+save(res,file = "Resultado kmeans2.Rdata")
+load( "C:\\Users\\EEIE\\Music\\Nicolás\\2. kmeans\\Resultado kmeans2.Rdata")
+
+res$size #mirar el tamaño de cada cluster
+res$betweenss
+res$totss
+
+#visualizacion de los clusters de kmeans
+#Lo saque del libro de practical guide...
+# grafica <- fviz_cluster(res, data = dfa,
+#                         ellipse.type = "euclid", # Concentration ellipse
+#                         star.plot = FALSE, # Add segments from centroids to items
+#                         repel = FALSE, # Avoid label overplotting (slow)
+#                         ggtheme = theme_minimal(),ellipse = FALSE
+#                         )
+
+#Exportamos los resultados en un archivo .csv
+
+textoclean2 = textoclean
+textoclean2 = as.character(unlist(textoclean2))
+textolimpiado = textoclean2[as.numeric(rownames(x = dtmatrix))]
+class(textolimpiado)<- "character"
+datosFin =data.frame(textolimpiado, res$cluster)
+save(datosFin,file = "Resultadokmeans en data frame2.Rdata")
+
+write.table(
+  x = datosFin,
+  file = "clusteringkmeans2.csv",
+  col.names = TRUE,
+  row.names = FALSE,
+  sep = "/"
+)
+
+
+getwd()
